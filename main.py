@@ -35,7 +35,10 @@ class WeatherStates(StatesGroup):
     start_city = State()
     end_city = State()
     days = State()
-
+@router.message(Command("weather"))
+async def weather_command(message: types.Message, state: FSMContext):
+    await message.answer("Выбери начальную точку маршрута или введи вручную:", reply_markup=city_buttons("start_city"))
+    await state.set_state(WeatherStates.start_city)
 def get_coordinates(city_name):
     base_url = "https://geocoding-api.open-meteo.com/v1/search"
     request_query = f'?name={city_name}&count=5&language=ru&format=json'
@@ -126,7 +129,10 @@ def city_buttons(prefix):
     return InlineKeyboardMarkup(
         inline_keyboard=[[InlineKeyboardButton(text=city, callback_data=f"{prefix}:{city}")] for city in cities]
     )
-
+def days_buttons(prefix):
+    return InlineKeyboardMarkup(
+    inline_keyboard=[[InlineKeyboardButton(text=str(i), callback_data=f"days:{i}")] for i in range(1, 8)]
+    )
 @router.callback_query(F.data.startswith("start_city:"))
 async def set_start_city_callback(callback: CallbackQuery, state: FSMContext):
     city = callback.data.split(":")[1]
@@ -147,7 +153,7 @@ async def set_start_city_text(message: types.Message, state: FSMContext):
     await message.answer(f"Начальная точка: {city}")
     await message.answer("Выбери конечную точку маршрута:", reply_markup=city_buttons("end_city"))
     await state.set_state(WeatherStates.end_city)
-
+"""
 @router.message(WeatherStates.days)
 async def select_days(message: types.Message, state: FSMContext):
     try:
@@ -172,7 +178,7 @@ async def select_days(message: types.Message, state: FSMContext):
     await message.answer(f"Прогноз для {start_city} на {days} дней:\n{start_weather}\n (˵ •̀ ᴗ - ˵ ) ✧")
     await message.answer(f"Прогноз для {end_city} на {days} дней:\n{end_weather}\n(૭ ｡•̀ ᵕ •́｡ )૭")
     await state.clear()
-
+"""
 @router.callback_query(F.data.startswith("end_city:"))
 async def select_end_city_callback(callback: CallbackQuery, state: FSMContext):
     city = callback.data.split(":")[1]
@@ -182,10 +188,8 @@ async def select_end_city_callback(callback: CallbackQuery, state: FSMContext):
         return
     await state.update_data(end_city=(city, coords))
     await callback.message.answer(f"Конечная точка маршрута: {city}")
-
-    await callback.message.answer("Укажи длительность путешествия (в днях):")
+    await callback.message.answer("Укажи длительность путешествия (в днях):", reply_markup=days_buttons("days"))
     await state.set_state(WeatherStates.days)
-
 @router.message(WeatherStates.end_city)
 async def select_end_city_manual(message: types.Message, state: FSMContext):
     city = message.text
@@ -195,9 +199,34 @@ async def select_end_city_manual(message: types.Message, state: FSMContext):
         return
     await state.update_data(end_city=(city, coords))
     await message.answer(f"Конечная точка маршрута: {city}")
-
-    await message.answer("Укажи длительность путешествия (в днях):")
+    await message.answer("Укажи длительность путешествия (в днях):", reply_markup=days_buttons("days"))
     await state.set_state(WeatherStates.days)
+@router.callback_query(F.data.startswith("days:"))
+async def set_days_callback(callback: CallbackQuery, state: FSMContext):
+    days = int(callback.data.split(":")[1])
+    await process_days_input(callback.message, state, days)
+
+@router.message(WeatherStates.days)
+async def set_days_manual(message: types.Message, state: FSMContext):
+    try:
+        days = int(message.text)
+        if days <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("Пожалуйста, введи корректное количество дней (целое число больше 0).")
+        return
+    await process_days_input(message, state, days)
+
+async def process_days_input(message, state, days):
+    await state.update_data(days=days)
+    data = await state.get_data()
+    start_city, start_coords = data['start_city']
+    end_city, end_coords = data['end_city']
+    start_weather = get_weather(*start_coords, days)
+    end_weather = get_weather(*end_coords, days)
+    await message.answer(f"Прогноз для {start_city} на {days} дней:\n{start_weather}\n (˵ •̀ ᴗ - ˵ ) ✧")
+    await message.answer(f"Прогноз для {end_city} на {days} дней:\n{end_weather}\n(૭ ｡•̀ ᵕ •́｡ )૭")
+    await state.clear()
 async def main():
     dp.include_router(router)
     await dp.start_polling(bot)
